@@ -5,35 +5,26 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const APPLICATION_ID = process.env.DISCORD_CLIENT_ID;
-const BOT_TOKEN = process.env.BOT_TOKEN; // Must have "applications.commands" scope
+const BOT_TOKEN = process.env.BOT_TOKEN; // Your bot token with applications.commands scope
 
-const API_URL = `https://discord.com/api/v10/applications/${APPLICATION_ID}/commands`;
-
-const commandData = [
-  {
-    "name": "chat",
-    "description": "Start a text chat with Groq AI",
-    "type": 1,
-    "dm_permission": true,
-    "options": [
+async function registerGlobalCommand() {
+  const commandData = {
+    name: 'chat',
+    description: 'Chat with AI',
+    type: 1, // slash command
+    dm_permission: true, // allow in DMs
+    options: [
       {
-        "name": "prompt",
-        "description": "Enter your message",
-        "type": 3, // 3 = STRING type
-        "required": true
-      }
-    ]
-  },
-  {
-    name: 'ping',
-    description: 'Replies with Pong!',
-  },
-];
+        type: 3, // STRING
+        name: 'prompt',
+        description: 'Your message',
+        required: true,
+      },
+    ],
+  };
 
-async function clearAndRegisterCommands() {
-  // Bulk overwrite (clear + add)
-  const res = await fetch(API_URL, {
-    method: 'PUT',
+  const res = await fetch(`https://discord.com/api/v10/applications/${APPLICATION_ID}/commands`, {
+    method: 'POST',
     headers: {
       'Authorization': `Bot ${BOT_TOKEN}`,
       'Content-Type': 'application/json',
@@ -41,8 +32,8 @@ async function clearAndRegisterCommands() {
     body: JSON.stringify(commandData),
   });
 
-  const data = await res.json();
-  console.log('Registered commands:', data);
+  const result = await res.json();
+  console.log('Global slash command registered:', result);
 }
 
-clearAndRegisterCommands().catch(console.error);
+registerGlobalCommand().catch(console.error);
