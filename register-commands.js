@@ -853,6 +853,8 @@ const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 // Function to register a single command with rate limit handling
 async function registerSingleCommand(commandData, retryCount = 0) {
+  const maxRetries = 3;
+  
   try {
     const res = await fetch(`https://discord.com/api/v10/applications/${APPLICATION_ID}/commands`, {
       method: 'POST',
@@ -872,86 +874,54 @@ async function registerSingleCommand(commandData, retryCount = 0) {
 
     const result = await res.json();
     
-    // Handle rate limiting (429 status)
+    // Handle rate limiting (status 429)
     if (res.status === 429) {
-      const retryAfter = result.retry_after || 5; // Discord provides retry_after in seconds
-      console.log(`⚠️  Rate limited for command ${commandData.name}. Waiting ${retryAfter} seconds...`);
-      return { rateLimited: true, retryAfter: retryAfter * 1000, command: commandData.name }; // Convert to milliseconds
+      const retryAfter = result.retry_after || 5; // Default to 5 seconds if not provided
+      console.warn(`⚠️  Rate limited for command ${commandData.name}. Retry after ${retryAfter} seconds...`);
+      
+      if (retryCount < maxRetries) {
+        await delay(retryAfter * 1000); // Convert to milliseconds
+        console.log(`🔄 Retrying command ${commandData.name} (attempt ${retryCount + 1}/${maxRetries})`);
+        return await registerSingleCommand(commandData, retryCount + 1);
+      } else {
+        console.error(`❌ Max retries exceeded for command ${commandData.name}`);
+        return { success: false, command: commandData.name, result, rateLimited: true };
+      }
     }
     
     if (!res.ok) {
       console.error(`❌ Failed to register command ${commandData.name}:`, result);
+      return { success: false, command: commandData.name, result };
     } else {
       console.log(`✅ Global slash command ${commandData.name} registered successfully`);
+      return { success: true, command: commandData.name, result };
     }
-    return { success: res.ok, command: commandData.name, result, rateLimited: false };
+    
   } catch (err) {
-    console.error(`❌ Error registering command ${commandData.name}:`, err);
-    return { success: false, command: commandData.name, error: err, rateLimited: false };
+    console.error(`💥 Error registering command ${commandData.name}:`, err);
+    
+    // Retry on network errors
+    if (retryCount < maxRetries && (err.code === 'ECONNRESET' || err.code === 'ETIMEDOUT')) {
+      console.log(`🔄 Network error, retrying command ${commandData.name} in 2 seconds...`);
+      await delay(2000);
+      return await registerSingleCommand(commandData, retryCount + 1);
+    }
+    
+    return { success: false, command: commandData.name, error: err };
   }
 }
 
-// Process a batch with rate limit handling and retry logic
-async function processBatchWithRetry(batch, batchNumber, totalBatches, maxRetries = 3) {
-  let attempt = 1;
-  let currentBatch = [...batch]; // Create a copy to work with
-  
-  while (attempt <= maxRetries && currentBatch.length > 0) {
-    console.log(`Processing batch ${batchNumber}/${totalBatches} (attempt ${attempt}) - ${currentBatch.length} commands:`);
-    currentBatch.forEach(cmd => console.log(`  • ${cmd.name}`));
-    
-    // Process all commands in the current batch simultaneously
-    const promises = currentBatch.map(command => registerSingleCommand(command));
-    const results = await Promise.all(promises);
-    
-    // Check for rate limited commands
-    const rateLimitedResults = results.filter(r => r.rateLimited);
-    const successfulResults = results.filter(r => !r.rateLimited);
-    
-    if (rateLimitedResults.length > 0) {
-      // Find the longest retry_after time
-      const maxRetryAfter = Math.max(...rateLimitedResults.map(r => r.retryAfter));
-      
-      console.log(`🔄 ${rateLimitedResults.length} commands were rate limited in batch ${batchNumber}`);
-      console.log(`⏳ Waiting ${maxRetryAfter / 1000} seconds before retrying...`);
-      
-      await delay(maxRetryAfter);
-      
-      // Prepare commands that need to be retried
-      const commandsToRetry = rateLimitedResults.map(r => 
-        batch.find(cmd => cmd.name === r.command)
-      );
-      
-      currentBatch = commandsToRetry;
-      attempt++;
-    } else {
-      // No rate limits, batch completed successfully
-      console.log(`✅ Batch ${batchNumber} completed successfully: ${successfulResults.filter(r => r.success).length}/${batch.length} registered\n`);
-      return results;
-    }
-  }
-  
-  // If we reach here, we've exceeded max retries
-  if (currentBatch.length > 0) {
-    console.log(`⚠️  Batch ${batchNumber} exceeded maximum retries. ${currentBatch.length} commands may not be registered.`);
-    // Return the last results we got
-    const promises = currentBatch.map(command => ({ success: false, command: command.name, error: 'Max retries exceeded' }));
-    return promises;
-  }
-}
-// Main function with rate limiting and retry logic
+// Main function with rate limiting and batch retry logic
 async function registerGlobalCommands() {
-  console.log(`🚀 Starting to register ${commands.length} commands with rate limiting and retry logic...`);
-  console.log('⚙️  Rate limit: 2 commands every 2 seconds');
-  console.log('🔄 Max retries per batch: 3');
-  console.log('=' .repeat(60) + '\n');
+  console.log(`🚀 Starting to register ${commands.length} commands with rate limiting...`);
+  console.log('📊 Rate limit: 2 commands every 2 seconds\n');
   
   const batchSize = 2;
   const batchDelay = 2000; // 2 seconds in milliseconds
   
   let successCount = 0;
   let failureCount = 0;
-  let totalRetries = 0;
+  let rateLimitedCommands = [];
   
   // Process commands in batches
   for (let i = 0; i < commands.length; i += batchSize) {
@@ -959,24 +929,68 @@ async function registerGlobalCommands() {
     const batchNumber = Math.floor(i / batchSize) + 1;
     const totalBatches = Math.ceil(commands.length / batchSize);
     
-    // Process batch with retry logic
-    const results = await processBatchWithRetry(batch, batchNumber, totalBatches);
+    console.log(`📦 Processing batch ${batchNumber}/${totalBatches} (${batch.length} commands):`);
+    console.log(`   Commands: ${batch.map(c => c.name).join(', ')}`);
     
-    // Count successes and failures
-    if (results) {
-      results.forEach(result => {
-        if (result && result.success) {
-          successCount++;
-        } else {
-          failureCount++;
+    // Process all commands in the current batch simultaneously
+    const promises = batch.map(command => registerSingleCommand(command));
+    const results = await Promise.all(promises);
+    
+    // Analyze results
+    let batchSuccesses = 0;
+    let batchRateLimited = [];
+    
+    results.forEach(result => {
+      if (result.success) {
+        successCount++;
+        batchSuccesses++;
+      } else {
+        failureCount++;
+        if (result.rateLimited) {
+          batchRateLimited.push(result.command);
+          rateLimitedCommands.push(result.command);
         }
-      });
+      }
+    });
+    
+    // Show batch completion
+    console.log(`✨ Batch ${batchNumber} completed: ${batchSuccesses}/${batch.length} successful`);
+    if (batchRateLimited.length > 0) {
+      console.log(`⚠️  Rate limited commands in batch: ${batchRateLimited.join(', ')}`);
     }
+    console.log('');
     
     // Wait before processing the next batch (except for the last batch)
     if (i + batchSize < commands.length) {
-      console.log(`⏸️  Waiting ${batchDelay/1000} seconds before next batch...\n`);
+      console.log(`⏳ Waiting ${batchDelay/1000} seconds before next batch...\n`);
       await delay(batchDelay);
+    }
+  }
+  
+  // Retry rate-limited commands if any
+  if (rateLimitedCommands.length > 0) {
+    console.log('🔄 Retrying rate-limited commands...\n');
+    
+    // Wait a bit longer before retrying
+    await delay(5000);
+    
+    for (const commandName of rateLimitedCommands) {
+      const commandData = commands.find(c => c.name === commandName);
+      if (commandData) {
+        console.log(`🔄 Retrying rate-limited command: ${commandName}`);
+        const result = await registerSingleCommand(commandData);
+        
+        if (result.success) {
+          successCount++;
+          failureCount--; // Adjust the count since we're now successful
+          console.log(`✅ Successfully registered ${commandName} on retry`);
+        } else {
+          console.log(`❌ Failed to register ${commandName} even on retry`);
+        }
+        
+        // Wait between retry attempts
+        await delay(1000);
+      }
     }
   }
   
@@ -984,18 +998,18 @@ async function registerGlobalCommands() {
   console.log('\n' + '='.repeat(60));
   console.log('📊 COMMAND REGISTRATION SUMMARY');
   console.log('='.repeat(60));
-  console.log(`📝 Total commands: ${commands.length}`);
+  console.log(`📦 Total commands: ${commands.length}`);
   console.log(`✅ Successfully registered: ${successCount}`);
   console.log(`❌ Failed to register: ${failureCount}`);
-  console.log(`🔄 Total retries due to rate limits: ${totalRetries}`);
+  console.log(`⚠️  Rate limited (max retries): ${rateLimitedCommands.length - (successCount - (commands.length - rateLimitedCommands.length))}`);
   console.log('='.repeat(60));
   
   if (failureCount > 0) {
     console.log('\n⚠️  Some commands failed to register. Check the error messages above for details.');
-    console.log('💡 Tip: You can re-run this script to attempt registering failed commands.');
+    process.exit(1); // Exit with error code for CI/CD
   } else {
     console.log('\n🎉 All commands registered successfully!');
-    console.log('🤖 Your Discord bot is ready to use!');
+    process.exit(0); // Exit successfully
   }
 }
 
