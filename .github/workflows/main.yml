@@ -30,7 +30,6 @@ jobs:
         uses: actions/setup-node@v4  # updated to v4
         with:
           node-version: '18'  # updated to Node 18 (LTS)
-          cache: 'npm'        # cache npm dependencies
           
       - name: Validate environment variables
         run: |
@@ -47,7 +46,7 @@ jobs:
       - name: Install dependencies
         run: |
           echo "📦 Installing dependencies..."
-          npm ci  # use npm ci for faster, more reliable installs in CI
+          npm install  # use npm install for flexible dependency resolution
           
       - name: Pre-flight check
         run: |
