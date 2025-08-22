@@ -1,115 +1,105 @@
 import express from 'express';
-import crypto from 'crypto';
 import dotenv from 'dotenv';
 import fetch from 'node-fetch';
+import { InteractionType, InteractionResponseType, verifyKey } from 'discord-interactions';
 
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 3000;
 const PUBLIC_KEY = process.env.DISCORD_PUBLIC_KEY;
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 
 if (!PUBLIC_KEY || !GROQ_API_KEY) {
-    console.error("Error: DISCORD_PUBLIC_KEY and GROQ_API_KEY environment variables must be set.");
-    process.exit(1); // Exit if critical environment variables are missing
+  console.error("Missing DISCORD_PUBLIC_KEY or GROQ_API_KEY");
+  process.exit(1);
 }
 
-// Middleware to verify request signature
-function verifyKey(req, res, buf, encoding) {
-    const signature = req.headers['x-signature-ed25519'];
-    const timestamp = req.headers['x-signature-timestamp'];
+// Capture raw body for signature verification
+app.use(express.json({
+  verify: (req, res, buf) => {
+    req.rawBody = buf.toString();
+  }
+}));
 
-    if (!signature || !timestamp) {
-        return res.status(401).send('Invalid request signature: Missing headers');
+// Middleware to verify Discord signature
+function verifyDiscordRequest(req, res, next) {
+  const signature = req.get('X-Signature-Ed25519');
+  const timestamp = req.get('X-Signature-Timestamp');
+  const body = req.rawBody;
+
+  try {
+    const isValid = verifyKey(body, signature, timestamp, PUBLIC_KEY);
+    if (!isValid) {
+      return res.status(401).send('Bad request signature');
     }
-
-    try {
-        const message = Buffer.from(timestamp + buf.toString(), 'utf-8');
-        const publicKey = Buffer.from(PUBLIC_KEY, 'hex');
-        const signatureBuffer = Buffer.from(signature, 'hex');
-
-        const isVerified = crypto.verify(null, message, publicKey, signatureBuffer);
-
-
-        if (!isVerified) {
-            return res.status(401).send('Invalid request signature: Signature mismatch');
-        }
-    } catch (error) {
-        console.error("Signature verification error:", error);
-        return res.status(400).send('Invalid request: Signature verification failed'); // More informative error
-    }
+    next(); // ✅ proceed if valid
+  } catch (err) {
+    console.error("Signature verification failed:", err);
+    return res.status(401).send('Invalid request signature');
+  }
 }
 
-app.use(express.json({ verify: verifyKey }));
-app.use(express.urlencoded({ extended: true })); // Consider this if you need URL-encoded data
+// ✅ Must include leading slash
+app.post('/api/interactions', verifyDiscordRequest, async (req, res) => {
+  const { type, data } = req.body;
 
-// Handle GET request for verification (Discord's initial handshake)
-app.get('/interactions', (req, res) => {
-    res.status(200).send('OK'); // Respond with 200 OK
-});
+  // 1) PING = handshake
+  if (type === InteractionType.PING) {
+    return res.json({ type: InteractionResponseType.PONG });
+  }
 
-// Handle POST requests for interactions
-app.post('/interactions', async (req, res) => {
-    const interaction = req.body;
+  // 2) Slash command: /chat
+  if (type === InteractionType.APPLICATION_COMMAND) {
+    const { name, options } = data;
 
-    try {
-        // PING interaction type (Discord's heartbeat)
-        if (interaction.type === 1) {
-            return res.json({ type: 1 }); // Respond with a PONG
+    if (name === 'chat') {
+      const prompt = options?.[0]?.value;
+
+      try {
+        const groqResponse = await fetch('https://api.groq.com/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${GROQ_API_KEY}`,
+          },
+          body: JSON.stringify({
+            model: "mixtral-8x7b-32768",
+            messages: [{ role: "user", content: prompt }],
+            max_tokens: 1024,
+          }),
+        });
+
+        if (!groqResponse.ok) {
+          return res.json({
+            type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+            data: { content: `Groq API Error: ${groqResponse.status} ${groqResponse.statusText}` }
+          });
         }
 
-        // Application command interaction type (slash commands)
-        if (interaction.type === 2 && interaction.data.name === 'chat') {
-            const prompt = interaction.data.options[0].value;
+        const groqData = await groqResponse.json();
+        const reply = groqData?.choices?.[0]?.message?.content || "No reply from Groq API.";
 
-            // Call Groq API
-            try {
-                const groqResponse = await fetch('https://api.groq.com/v1/chat/completions', { // Replace with the *actual* Groq API endpoint
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${GROQ_API_KEY}`,
-                    },
-                    body: JSON.stringify({
-                        model: "mixtral-8x7b-32768", // Or the model you want to use
-                        messages: [{ role: "user", content: prompt }],
-                        max_tokens: 1024, // Adjust as needed
-                    }),
-                });
+        return res.json({
+          type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+          data: { content: reply },
+        });
 
-                if (!groqResponse.ok) {
-                    console.error("Groq API error:", groqResponse.status, groqResponse.statusText);
-                    return res.status(500).json({ type: 4, data: { content: `Groq API Error: ${groqResponse.status} ${groqResponse.statusText}` } });
-                }
-
-                const groqData = await groqResponse.json();
-
-                const reply = groqData?.choices?.[0]?.message?.content || 'No reply from Groq API.';
-
-                // Respond to Discord with the Groq API's reply
-                return res.json({
-                    type: 4, // Indicates a response to the command
-                    data: {
-                        content: reply,
-                    },
-                });
-
-            } catch (groqError) {
-                console.error("Error calling Groq API:", groqError);
-                return res.status(500).json({ type: 4, data: { content: `Error calling Groq API: ${groqError.message}` } });
-            }
-        }
-
-        // Unknown interaction type
-        return res.status(400).send('Unknown interaction type');
-
-    } catch (error) {
-        console.error("General error handling interaction:", error);
-        return res.status(500).send('Internal Server Error');
+      } catch (err) {
+        return res.json({
+          type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+          data: { content: `Error calling Groq API: ${err.message}` }
+        });
+      }
     }
+
+    return res.json({
+      type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+      data: { content: "Unknown command." }
+    });
+  }
+
+  return res.status(400).json({ error: "Unknown interaction type" });
 });
 
-app.listen(PORT, () => {
-    console.log(`Server listening on port ${PORT}`);
-});
+// Vercel-style export
+export default app;
