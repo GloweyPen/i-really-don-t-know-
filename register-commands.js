@@ -22,28 +22,16 @@ const commandData = [
       },
     ],
   },
+  {
+    name: 'ping',
+    description: 'Replies with Pong!',
+  },
 ];
 
 async function clearAndRegisterCommands() {
-  // 1) Fetch all existing commands
-  const existing = await fetch(API_URL, {
-    headers: { Authorization: `Bot ${BOT_TOKEN}` },
-  }).then(res => res.json());
-
-  console.log(`Found ${existing.length} existing commands.`);
-
-  // 2) Delete them all
-  for (const cmd of existing) {
-    await fetch(`${API_URL}/${cmd.id}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bot ${BOT_TOKEN}` },
-    });
-    console.log(`Deleted command: ${cmd.name}`);
-  }
-
-  // 3) Register the new ones
+  // Bulk overwrite (clear + add)
   const res = await fetch(API_URL, {
-    method: 'POST',
+    method: 'PUT',
     headers: {
       'Authorization': `Bot ${BOT_TOKEN}`,
       'Content-Type': 'application/json',
@@ -52,7 +40,7 @@ async function clearAndRegisterCommands() {
   });
 
   const data = await res.json();
-  console.log('Registered new command:', data);
+  console.log('Registered commands:', data);
 }
 
 clearAndRegisterCommands().catch(console.error);
