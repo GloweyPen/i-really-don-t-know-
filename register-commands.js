@@ -11,16 +11,18 @@ const API_URL = `https://discord.com/api/v10/applications/${APPLICATION_ID}/comm
 
 const commandData = [
   {
-    name: 'chat',
-    description: 'Chat with AI',
-    options: [
+    "name": "chat",
+    "description": "Start a text chat with Groq AI",
+    "type": 1,
+    "dm_permission": true,
+    "options": [
       {
-        type: 3, // STRING
-        name: 'prompt',
-        description: 'Your message',
-        required: true,
-      },
-    ],
+        "name": "prompt",
+        "description": "Enter your message",
+        "type": 3, // 3 = STRING type
+        "required": true
+      }
+    ]
   },
   {
     name: 'ping',
