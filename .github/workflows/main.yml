@@ -1,36 +1,91 @@
-name: Command Registration Workflow
+name: Discord Command Registration
 
 on:
   schedule:
-    - cron: '*/5 * * * *'  # every 5 minutes
-  workflow_dispatch:      # manual trigger
+    - cron: '0 */6 * * *'  # every 6 hours instead of 5 minutes (more reasonable)
+  workflow_dispatch:       # manual trigger
+  push:
+    paths:
+      - 'register-commands.js'  # trigger on script changes
+      - '.github/workflows/register-commands.yml'
 
 jobs:
   register-commands:
     runs-on: ubuntu-latest
-
+    timeout-minutes: 10  # prevent hanging workflows
+    
     concurrency:
       group: command-registration
       cancel-in-progress: true
-
+    
     env:
       DISCORD_CLIENT_ID: ${{ secrets.DISCORD_CLIENT_ID }}
       BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-
+    
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
-
+        uses: actions/checkout@v4  # updated to v4
+        
       - name: Set up Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4  # updated to v4
         with:
-          node-version: '16'
-
+          node-version: '18'  # updated to Node 18 (LTS)
+          cache: 'npm'        # cache npm dependencies
+          
+      - name: Validate environment variables
+        run: |
+          if [ -z "$DISCORD_CLIENT_ID" ]; then
+            echo "❌ Error: DISCORD_CLIENT_ID is not set"
+            exit 1
+          fi
+          if [ -z "$BOT_TOKEN" ]; then
+            echo "❌ Error: BOT_TOKEN is not set"
+            exit 1
+          fi
+          echo "✅ Environment variables validated"
+          
       - name: Install dependencies
-        run: npm install
-
-      - name: Register slash commands globally
-        run: node register-commands.js
+        run: |
+          echo "📦 Installing dependencies..."
+          npm ci  # use npm ci for faster, more reliable installs in CI
+          
+      - name: Pre-flight check
+        run: |
+          echo "🔍 Running pre-flight checks..."
+          if [ ! -f "register-commands.js" ]; then
+            echo "❌ Error: register-commands.js not found"
+            exit 1
+          fi
+          echo "✅ Pre-flight checks passed"
+          
+      - name: Register Discord slash commands
+        id: register
+        run: |
+          echo "🚀 Starting Discord command registration..."
+          node register-commands.js
         env:
           DISCORD_CLIENT_ID: ${{ secrets.DISCORD_CLIENT_ID }}
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: registration-logs-${{ github.run_number }}
+          path: |
+            *.log
+            /home/runner/.npm/_logs/*.log
+          retention-days: 7
+          
+      - name: Notify on success
+        if: success()
+        run: |
+          echo "🎉 Command registration completed successfully!"
+          echo "✅ All Discord slash commands have been registered"
+          
+      - name: Notify on failure  
+        if: failure()
+        run: |
+          echo "❌ Command registration failed!"
+          echo "Check the logs above for detailed error information"
+          echo "💡 Tip: You can manually trigger this workflow from the Actions tab"
