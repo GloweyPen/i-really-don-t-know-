@@ -848,34 +848,96 @@ const commands = [
   },
 ];
 
-async function registerGlobalCommands() {
-  for (const commandData of commands) {
-    try {
-      const res = await fetch(`https://discord.com/api/v10/applications/${APPLICATION_ID}/commands`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bot ${BOT_TOKEN}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          name: commandData.name,
-          description: commandData.description,
-          type: 1, // CHAT_INPUT
-          dm_permission: true,               // allow in DMs
-          default_member_permissions: null,  // no guild-perm gating
-          options: commandData.options || [],
-        }),
-      });
+// Utility function to delay execution
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-      const result = await res.json();
-      if (!res.ok) {
-        console.error(`Failed to register command ${commandData.name}:`, result);
-      } else {
-        console.log(`Global slash command ${commandData.name} registered:`, result);
-      }
-    } catch (err) {
-      console.error(`Error registering command ${commandData.name}:`, err);
+// Function to register a single command
+async function registerSingleCommand(commandData) {
+  try {
+    const res = await fetch(`https://discord.com/api/v10/applications/${APPLICATION_ID}/commands`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bot ${BOT_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: commandData.name,
+        description: commandData.description,
+        type: 1, // CHAT_INPUT
+        dm_permission: true,               // allow in DMs
+        default_member_permissions: null,  // no guild-perm gating
+        options: commandData.options || [],
+      }),
+    });
+
+    const result = await res.json();
+    if (!res.ok) {
+      console.error(`Failed to register command ${commandData.name}:`, result);
+    } else {
+      console.log(`Global slash command ${commandData.name} registered successfully`);
     }
+    return { success: res.ok, command: commandData.name, result };
+  } catch (err) {
+    console.error(`Error registering command ${commandData.name}:`, err);
+    return { success: false, command: commandData.name, error: err };
+  }
+}
+
+// Main function with rate limiting
+async function registerGlobalCommands() {
+  console.log(`Starting to register ${commands.length} commands with rate limiting...`);
+  console.log('Rate limit: 2 commands every 2 seconds\n');
+  
+  const batchSize = 2;
+  const batchDelay = 2000; // 2 seconds in milliseconds
+  
+  let successCount = 0;
+  let failureCount = 0;
+  
+  // Process commands in batches
+  for (let i = 0; i < commands.length; i += batchSize) {
+    const batch = commands.slice(i, i + batchSize);
+    const batchNumber = Math.floor(i / batchSize) + 1;
+    const totalBatches = Math.ceil(commands.length / batchSize);
+    
+    console.log(`Processing batch ${batchNumber}/${totalBatches} (${batch.length} commands):`);
+    
+    // Process all commands in the current batch simultaneously
+    const promises = batch.map(command => registerSingleCommand(command));
+    const results = await Promise.all(promises);
+    
+    // Count successes and failures
+    results.forEach(result => {
+      if (result.success) {
+        successCount++;
+      } else {
+        failureCount++;
+      }
+    });
+    
+    // Show batch completion
+    const batchSuccesses = results.filter(r => r.success).length;
+    console.log(`Batch ${batchNumber} completed: ${batchSuccesses}/${batch.length} successful\n`);
+    
+    // Wait before processing the next batch (except for the last batch)
+    if (i + batchSize < commands.length) {
+      console.log(`Waiting ${batchDelay/1000} seconds before next batch...\n`);
+      await delay(batchDelay);
+    }
+  }
+  
+  // Final summary
+  console.log('='.repeat(50));
+  console.log('Command Registration Summary:');
+  console.log(`Total commands: ${commands.length}`);
+  console.log(`Successfully registered: ${successCount}`);
+  console.log(`Failed to register: ${failureCount}`);
+  console.log('='.repeat(50));
+  
+  if (failureCount > 0) {
+    console.log('\nSome commands failed to register. Check the error messages above for details.');
+  } else {
+    console.log('\nAll commands registered successfully! 🎉');
   }
 }
 
