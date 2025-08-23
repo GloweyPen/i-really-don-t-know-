@@ -916,7 +916,7 @@ async function registerGlobalCommands() {
   console.log(`🚀 Starting to register ${commands.length} commands with rate limiting...`);
   console.log('📊 Rate limit: 2 commands every 2 seconds\n');
   
-  const batchSize = 2;
+  const batchSize = 1;
   const batchDelay = 5000; // 2 seconds in milliseconds
   
   let successCount = 0;
