@@ -32,6 +32,18 @@ const commands = [
     ],
   },
   {
+    name: 'downloadvideo',
+    description: 'Download a Video from YouTube',
+    options: [
+      {
+        type: 3,
+        name: 'URL',
+        description: 'Target YouTube URL',
+        required: true,
+      },
+    ],
+  },
+  {
     name: 'quote',
     description: 'Get an inspirational quote',
     options: [
