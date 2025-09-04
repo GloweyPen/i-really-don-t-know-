@@ -8,9 +8,22 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 
 const commands = [
   {
-    name: 'lyrics',
-    description: 'Get the lyrics to a song',
-    options: [],
+  name: 'lyrics',
+  description: 'Get the lyrics to a song',
+  options: [
+      {
+        name: 'song',
+        description: 'The name of the song',
+        type: 3, // STRING
+        required: true
+      },
+      {
+        name: 'artist',
+        description: 'The artist who performed the song',
+        type: 3, // STRING
+        required: false
+      }
+    ],
   },
   {
     name: 'chat',
