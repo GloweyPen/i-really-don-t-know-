@@ -10,14 +10,7 @@ const commands = [
   {
     name: 'lyrics',
     description: 'Get the lyrics to a song',
-    options: [
-      {
-        type: 3, // STRING
-        name: 'Song Name + Artist',
-        description: 'Target Song',
-        required: true,
-      },
-    ],
+    options: [],
   },
   {
     name: 'chat',
